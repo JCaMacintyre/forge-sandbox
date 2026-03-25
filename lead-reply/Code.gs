@@ -50,8 +50,7 @@ function processLeads() {
     return;
   }
 
-  var sheet = getOrCreateSheet_();
-  ensureSheetHeaders_(sheet);
+  var sheet = createOrValidateSheet_();
 
   // Fetch unread threads with the Leads label that do NOT have Replied label
   var query = "label:" + CONFIG.GMAIL_LABEL + " is:unread -label:" + CONFIG.REPLIED_LABEL;
@@ -274,33 +273,81 @@ function getOrCreateLabel_(name) {
   return GmailApp.createLabel(name);
 }
 
-/** Get or create the lead log spreadsheet tab. */
-function getOrCreateSheet_() {
-  var ss    = SpreadsheetApp.getActiveSpreadsheet();
+/**
+ * Create or validate the lead log spreadsheet tab.
+ *
+ * - Creates the tab if missing
+ * - Ensures the header row exists (and matches expected headers)
+ *
+ * Returns the sheet.
+ */
+function createOrValidateSheet_() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName(CONFIG.SHEET_NAME);
+
   if (!sheet) {
     sheet = ss.insertSheet(CONFIG.SHEET_NAME);
   }
+
+  var expected = [
+    "Timestamp",
+    "Sender Name",
+    "Email",
+    "Subject",
+    "Snippet",
+    "Reply Sent",
+    "Alert Sent",
+  ];
+
+  var lastRow = sheet.getLastRow();
+  if (lastRow === 0) {
+    sheet.appendRow(expected);
+    sheet.getRange(1, 1, 1, expected.length).setFontWeight("bold");
+    return sheet;
+  }
+
+  // Validate headers (best-effort). If mismatch, we do NOT overwrite user data.
+  var existing = sheet.getRange(1, 1, 1, expected.length).getValues()[0];
+  var ok = true;
+  for (var i = 0; i < expected.length; i++) {
+    if (String(existing[i] || "").trim() !== expected[i]) {
+      ok = false;
+      break;
+    }
+  }
+
+  if (!ok) {
+    Logger.log(
+      "WARNING: Sheet headers do not match expected template. " +
+        "Expected: " + expected.join(" | ")
+    );
+  }
+
   return sheet;
 }
 
-/** Add column headers if the sheet is empty. */
-function ensureSheetHeaders_(sheet) {
-  if (sheet.getLastRow() === 0) {
-    sheet.appendRow([
-      "Timestamp",
-      "Sender Name",
-      "Email",
-      "Subject",
-      "Snippet",
-      "Reply Sent",
-      "Alert Sent",
-    ]);
-    sheet.getRange(1, 1, 1, 7).setFontWeight("bold");
-  }
+// Backwards-compat alias
+function getOrCreateSheet_() {
+  return createOrValidateSheet_();
 }
 
 // ─── SETUP HELPERS (run these once manually) ────────────────────────────────
+
+/**
+ * Run a single processing pass (useful during onboarding).
+ *
+ * Recommended usage:
+ *  - Set TEST_MODE=true
+ *  - Run testConfig()
+ *  - Run runOnce()
+ *
+ * When ready:
+ *  - Set TEST_MODE=false
+ *  - Run setupTrigger()
+ */
+function runOnce() {
+  processLeads();
+}
 
 /**
  * Run once to set up the time-driven trigger (every 5 minutes).
@@ -341,7 +388,7 @@ function testConfig() {
   var leadsLabel = getLeadsLabel_();
   Logger.log("'Leads' label found: " + (leadsLabel ? "YES" : "NO — create it in Gmail first"));
 
-  var sheet = getOrCreateSheet_();
+  var sheet = createOrValidateSheet_();
   Logger.log("Sheet found/created: " + sheet.getName());
 
   var query = "label:" + CONFIG.GMAIL_LABEL + " is:unread -label:" + CONFIG.REPLIED_LABEL;
